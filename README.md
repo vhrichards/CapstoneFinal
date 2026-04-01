@@ -1,8 +1,26 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+This is the PlannerMVP frontend built with [Next.js](https://nextjs.org).
 
 ## Getting Started
 
-First, run the development server:
+1. Install dependencies:
+
+```bash
+npm install
+```
+
+2. Create your environment file:
+
+```bash
+cp .env.example .env.local
+```
+
+3. Add your OpenAI API key in `.env.local`:
+
+```bash
+OPENAI_API_KEY=your_openai_api_key_here
+```
+
+4. Run the development server:
 
 ```bash
 npm run dev
@@ -16,16 +34,22 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Open [http://localhost:3000](http://localhost:3000), login, open a trip, then click "Plan My Trip with AI".
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## AI Itinerary Integration
+
+- Server route: `app/api/itinerary/route.ts`
+- Model client: OpenAI SDK (`openai`)
+- Required env var: `OPENAI_API_KEY`
+
+The frontend sends trip details and voted preferences to the server route. The route calls the LLM and returns a 3-day itinerary JSON payload, which is then saved to local trip storage and displayed on the plan page.
 
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- [Next.js Documentation](https://nextjs.org/docs)
+- [OpenAI API Docs](https://platform.openai.com/docs)
 
 You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
 
