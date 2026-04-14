@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "mapbox-gl/dist/mapbox-gl.css";
 
 :root {
   --background: #f6f4ed;
@@ -66,4 +67,44 @@ h6 {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(0, 95, 115, 0.15);
+}
+
+.itinerary-map {
+  width: 100%;
+  min-height: 420px;
+  position: relative;
+  overflow: hidden;
+}
+
+.itinerary-map .mapboxgl-map {
+  width: 100%;
+  height: 100%;
+}
+
+.itinerary-map .mapboxgl-canvas-container,
+.itinerary-map .mapboxgl-canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.mapboxgl-marker {
+  position: absolute;
+  top: 0;
+  left: 0;
+  will-change: transform;
+}
+
+.itinerary-marker {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: #0a9396;
+  border: 2px solid #ffffff;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
 }

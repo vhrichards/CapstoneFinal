@@ -8,6 +8,7 @@ import {
   IdeaCategory,
   Trip,
   addIdeaToTrip,
+  addBudgetToTrip,
   getCurrentUser,
   getTripById,
   saveTripPlan,
@@ -25,6 +26,7 @@ export default function TripDetailsPage() {
   const [user, setUser] = useState("");
   const [ideaText, setIdeaText] = useState("");
   const [category, setCategory] = useState<IdeaCategory>("Food");
+  const [budgetAmount, setBudgetAmount] = useState("");
   const [error, setError] = useState("");
   const [isPlanning, setIsPlanning] = useState(false);
 
@@ -50,6 +52,22 @@ export default function TripDetailsPage() {
       return [];
     }
     return [...trip.ideas].sort((a, b) => b.votes - a.votes);
+  }, [trip]);
+
+  const budgetSummary = useMemo(() => {
+    if (!trip || trip.budgets.length === 0) {
+      return null;
+    }
+
+    const amounts = trip.budgets.map((entry) => entry.amount);
+    const avg = amounts.reduce((sum, value) => sum + value, 0) / amounts.length;
+    return {
+      average: Math.round(avg),
+      minimum: Math.min(...amounts),
+      maximum: Math.max(...amounts),
+      count: amounts.length,
+      currency: trip.budgets[0]?.currency ?? "USD",
+    };
   }, [trip]);
 
   function refreshTrip() {
@@ -79,6 +97,27 @@ export default function TripDetailsPage() {
     });
 
     setIdeaText("");
+    setError("");
+    refreshTrip();
+  }
+
+  function handleSaveBudget(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const amount = Number(budgetAmount);
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setError("Enter a valid budget amount.");
+      return;
+    }
+
+    addBudgetToTrip({
+      tripId,
+      user,
+      amount,
+      currency: "USD",
+    });
+
+    setBudgetAmount("");
     setError("");
     refreshTrip();
   }
@@ -196,6 +235,32 @@ export default function TripDetailsPage() {
               Contribute Idea
             </button>
           </form>
+
+          <div className="mt-6 rounded-2xl border border-[#d8caab] bg-[#fff5de] p-4">
+            <h3 className="text-lg font-semibold text-[#123a34]">Set Your Budget</h3>
+            <p className="mt-1 text-sm text-[#355952]">
+              Add your personal trip budget so AI can suggest realistic options.
+            </p>
+            <form onSubmit={handleSaveBudget} className="mt-3 flex gap-2">
+              <input
+                className="planner-input w-full rounded-xl px-3 py-2"
+                value={budgetAmount}
+                onChange={(event) => setBudgetAmount(event.target.value)}
+                inputMode="decimal"
+                placeholder="1200"
+              />
+              <button className="rounded-xl bg-[#0a9396] px-4 py-2 font-semibold text-white" type="submit">
+                Save
+              </button>
+            </form>
+            {budgetSummary ? (
+              <p className="mt-3 text-sm text-[#355952]">
+                {budgetSummary.count} entries. Avg {budgetSummary.currency} {budgetSummary.average}, min {budgetSummary.minimum}, max {budgetSummary.maximum}.
+              </p>
+            ) : (
+              <p className="mt-3 text-sm text-[#355952]">No budgets submitted yet.</p>
+            )}
+          </div>
 
           <button
             className="mt-6 w-full rounded-xl bg-[#123a34] px-4 py-3 font-semibold text-white hover:bg-[#0e2d29]"

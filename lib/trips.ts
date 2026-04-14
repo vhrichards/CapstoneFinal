@@ -14,6 +14,13 @@ export type TripIdea = {
   author: string;
 };
 
+export type BudgetContribution = {
+  user: string;
+  amount: number;
+  currency: string;
+  updatedAt: string;
+};
+
 export type PlannedStop = {
   time: string;
   title: string;
@@ -40,6 +47,7 @@ export type Trip = {
   theme: string;
   members: string[];
   ideas: TripIdea[];
+  budgets: BudgetContribution[];
   plan?: TripPlan;
 };
 
@@ -69,7 +77,9 @@ function readTripsFromStorage(): Trip[] {
       window.localStorage.setItem(TRIPS_STORAGE_KEY, JSON.stringify(seeded));
       return seeded;
     }
-    return parsed;
+    const normalized = parsed.map(normalizeTrip);
+    window.localStorage.setItem(TRIPS_STORAGE_KEY, JSON.stringify(normalized));
+    return normalized;
   } catch {
     const seeded = seedTrips();
     window.localStorage.setItem(TRIPS_STORAGE_KEY, JSON.stringify(seeded));
@@ -94,6 +104,20 @@ export function seedTrips(): Trip[] {
       startDate: "2026-07-08",
       theme: "Street food and late-night city energy",
       members: ["Maya", "Jordan"],
+      budgets: [
+        {
+          user: "Maya",
+          amount: 1600,
+          currency: "USD",
+          updatedAt: new Date("2026-03-01").toISOString(),
+        },
+        {
+          user: "Jordan",
+          amount: 1900,
+          currency: "USD",
+          updatedAt: new Date("2026-03-03").toISOString(),
+        },
+      ],
       ideas: [
         {
           id: "idea-1",
@@ -118,6 +142,14 @@ export function seedTrips(): Trip[] {
       startDate: "2026-09-12",
       theme: "Scenic hiking and lakeside chill",
       members: ["Ari", "Dev"],
+      budgets: [
+        {
+          user: "Ari",
+          amount: 1200,
+          currency: "USD",
+          updatedAt: new Date("2026-02-21").toISOString(),
+        },
+      ],
       ideas: [
         {
           id: "idea-3",
@@ -186,6 +218,7 @@ export function createTrip(input: {
     startDate: input.startDate,
     theme: input.theme,
     members: [input.creator],
+    budgets: [],
     ideas: [
       {
         id: crypto.randomUUID(),
@@ -272,6 +305,38 @@ export function saveTripPlan(tripId: string, plan: TripPlan): Trip | null {
   return trip;
 }
 
+export function addBudgetToTrip(input: {
+  tripId: string;
+  user: string;
+  amount: number;
+  currency?: string;
+}): Trip | null {
+  const trips = readTripsFromStorage();
+  const trip = trips.find((item) => item.id === normalizeTripCode(input.tripId));
+  if (!trip) {
+    return null;
+  }
+
+  const currency = (input.currency ?? "USD").toUpperCase();
+  const existing = trip.budgets.find((entry) => entry.user === input.user);
+
+  if (existing) {
+    existing.amount = input.amount;
+    existing.currency = currency;
+    existing.updatedAt = new Date().toISOString();
+  } else {
+    trip.budgets.push({
+      user: input.user,
+      amount: input.amount,
+      currency,
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  writeTripsToStorage(trips);
+  return trip;
+}
+
 export function generateTripPlan(tripId: string): Trip | null {
   const trips = readTripsFromStorage();
   const trip = trips.find((item) => item.id === normalizeTripCode(tripId));
@@ -335,4 +400,11 @@ function generateTripCode(title: string): string {
     .padEnd(5, "X");
   const random = Math.floor(Math.random() * 90 + 10).toString();
   return `${slug}${random}`;
+}
+
+function normalizeTrip(trip: Trip): Trip {
+  return {
+    ...trip,
+    budgets: Array.isArray(trip.budgets) ? trip.budgets : [],
+  };
 }

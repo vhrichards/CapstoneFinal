@@ -30,6 +30,12 @@ export async function POST(request: Request) {
     const client = new OpenAI({ apiKey });
     const rankedIdeas = [...trip.ideas].sort((a, b) => b.votes - a.votes);
     const topIdeas = rankedIdeas.slice(0, 6);
+    const budgetText =
+      trip.budgets && trip.budgets.length > 0
+        ? trip.budgets
+            .map((entry) => `${entry.user}: ${entry.currency} ${entry.amount}`)
+            .join(", ")
+        : "No explicit budgets submitted yet.";
 
     const prompt = `You are an expert group travel planner. Build a practical, fun 3-day itinerary in strict JSON.
 
@@ -39,6 +45,7 @@ Trip details:
 - Start date: ${trip.startDate}
 - Theme: ${trip.theme}
 - Members: ${trip.members.join(", ")}
+- Budget inputs: ${budgetText}
 
 Ranked preferences (higher votes first):
 ${topIdeas
@@ -65,6 +72,7 @@ Rules:
 - Exactly 3 days.
 - Exactly 3 stops per day.
 - Keep recommendations realistic for destination and group preferences.
+- Respect budget constraints and suggest cost-aware activities.
 - Vary activities so itinerary is not repetitive.
 - Do not include markdown fences or extra commentary.`;
 

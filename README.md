@@ -44,6 +44,12 @@ Open [http://localhost:3000](http://localhost:3000), login, open a trip, then cl
 
 The frontend sends trip details and voted preferences to the server route. The route calls the LLM and returns a 3-day itinerary JSON payload, which is then saved to local trip storage and displayed on the plan page.
 
+## Hotel Recommendations
+
+- Server route: `app/api/hotels/recommendations/route.ts`
+
+The trip plan page sends destination, dates, and aggregated budget preferences to the hotel route. The route returns local budget-aware hotel recommendations for the selected destination.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:
