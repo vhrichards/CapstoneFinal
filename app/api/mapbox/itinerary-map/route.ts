@@ -90,9 +90,7 @@ export async function POST(request: Request) {
       });
     }
 
-    const visiblePoints = spreadOverlappingPoints(points);
-
-    if (visiblePoints.length === 0) {
+    if (points.length === 0) {
       return NextResponse.json(
         { error: "Could not geocode itinerary stops for map display." },
         { status: 502 },
@@ -106,7 +104,7 @@ export async function POST(request: Request) {
           type: "Feature",
           geometry: {
             type: "LineString",
-            coordinates: visiblePoints.map((point) => [point.lon, point.lat]),
+            coordinates: points.map((point) => [point.lon, point.lat]),
           },
           properties: {
             stroke: "#005f73",
@@ -114,7 +112,7 @@ export async function POST(request: Request) {
             "stroke-opacity": 0.8,
           },
         },
-        ...visiblePoints.map((point) => ({
+        ...points.map((point) => ({
           type: "Feature",
           geometry: {
             type: "Point",
@@ -134,7 +132,7 @@ export async function POST(request: Request) {
     const mapUrl = `https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/geojson(${encodedOverlay})/auto/1200x700?padding=70&access_token=${token}`;
 
     return NextResponse.json({
-      points: visiblePoints,
+      points,
       mapUrl,
     });
   } catch (error) {
@@ -146,6 +144,7 @@ export async function POST(request: Request) {
 type DestinationContext = {
   center: [number, number];
   bbox?: [number, number, number, number];
+  label: string;
 };
 
 async function geocodeDestination(
@@ -175,16 +174,21 @@ async function geocodeDestination(
   return {
     center,
     bbox: feature?.bbox,
+    label: destination,
   };
 }
 
-function buildStopEndpoint(query: string, token: string, destination: DestinationContext): string {
+function buildStopEndpoint(
+  query: string,
+  token: string,
+  destination: DestinationContext,
+  limit: number,
+): string {
   const params = new URLSearchParams({
-    limit: "1",
+    limit: String(limit),
     access_token: token,
     proximity: `${destination.center[0]},${destination.center[1]}`,
-    autocomplete: "false",
-    types: "poi,address",
+    autocomplete: "true",
   });
 
   if (destination.bbox) {
@@ -200,40 +204,94 @@ async function geocodeStop(
   token: string,
   destination: DestinationContext,
 ): Promise<[number, number] | null> {
-  const primaryQuery = `${title}, ${destinationName}`;
-  const primary = await fetchCenter(buildStopEndpoint(primaryQuery, token, destination));
+  const primaryDestination = destinationName.split(",")[0]?.trim() ?? destinationName.trim();
+  const mapboxQueries = buildMapboxQueries(title, primaryDestination);
 
-  if (primary && !isNearCenter(primary, destination.center)) {
-    return primary;
+  for (const query of mapboxQueries) {
+    const candidates = await fetchCentersWithLabels(buildStopEndpoint(query, token, destination, 5));
+    const best = pickBestCandidate(title, destinationName, destination, candidates);
+    if (best) {
+      return best;
+    }
   }
 
-  // Retry with a broader query if the first result collapses to city center.
+  // Retry with a broader query if primary candidates are weak or empty.
   const retryParams = new URLSearchParams({
-    limit: "1",
+    limit: "5",
     access_token: token,
     proximity: `${destination.center[0]},${destination.center[1]}`,
-    autocomplete: "false",
-    types: "poi,address,place",
+    autocomplete: "true",
   });
-  const retryQuery = `${title} near ${destinationName}`;
+  const retryQuery = `${normalizeLandmarkTitle(title)} near ${primaryDestination}`;
   const retryEndpoint = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(retryQuery)}.json?${retryParams.toString()}`;
-  const retry = await fetchCenter(retryEndpoint);
-
-  const preferred = retry ?? primary ?? null;
-  if (preferred && !isNearCenter(preferred, destination.center)) {
-    return preferred;
+  const retryCandidates = await fetchCentersWithLabels(retryEndpoint);
+  const retry = pickBestCandidate(title, destinationName, destination, retryCandidates);
+  if (retry) {
+    return retry;
   }
 
-  // Fallback for landmark-style activity names when Mapbox geocoder lacks POI depth.
-  const fallback = await geocodeWithNominatim(`${title}, ${destinationName}`);
+  // Last resort fallback for landmark-style names.
+  const fallback = await geocodeWithNominatim(`${normalizeLandmarkTitle(title)} ${primaryDestination}`);
   if (fallback) {
-    return fallback;
+    const distanceKm = haversineKm(
+      destination.center[1],
+      destination.center[0],
+      fallback[1],
+      fallback[0],
+    );
+
+    if (distanceKm <= 60) {
+      return fallback;
+    }
   }
 
-  return preferred;
+  return null;
 }
 
-async function fetchCenter(endpoint: string): Promise<[number, number] | null> {
+function buildMapboxQueries(title: string, primaryDestination: string): string[] {
+  const normalized = normalizeLandmarkTitle(title);
+  const aliased = applyLandmarkAliases(normalized || title);
+
+  const queries = [
+    `${aliased} ${primaryDestination}`,
+    `${normalized} ${primaryDestination}`,
+    `${title} ${primaryDestination}`,
+    aliased,
+    normalized,
+  ].filter((value) => value.trim().length > 0);
+
+  const loweredTitle = title.toLowerCase();
+  if (loweredTitle.includes("vatican") && loweredTitle.includes("museum")) {
+    queries.unshift("Vatican City");
+    queries.unshift("Vatican Museums");
+  }
+
+  return Array.from(new Set(queries));
+}
+
+function normalizeLandmarkTitle(title: string): string {
+  return title
+    .replace(
+      /\b(roman|guided|famous|historic|local|best|tour|stop|experience|walking|food|wine|tasting|class|workshop|visit|activity)\b/gi,
+      " ",
+    )
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function applyLandmarkAliases(value: string): string {
+  return value
+    .replace(/\bcolosseum\b/gi, "Colosseo")
+    .replace(/\bvatican museums?\b/gi, "Musei Vaticani")
+    .trim();
+}
+
+type GeocodeCandidate = {
+  center: [number, number];
+  label: string;
+};
+
+async function fetchCentersWithLabels(endpoint: string): Promise<GeocodeCandidate[]> {
   const response = await fetch(endpoint, {
     headers: {
       "Content-Type": "application/json",
@@ -241,24 +299,117 @@ async function fetchCenter(endpoint: string): Promise<[number, number] | null> {
   });
 
   if (!response.ok) {
-    return null;
+    return [];
   }
 
   const data = (await response.json()) as {
-    features?: Array<{ center?: [number, number] }>;
+    features?: Array<{ center?: [number, number]; place_name?: string; text?: string }>;
   };
 
-  const center = data.features?.[0]?.center;
-  if (!center || center.length < 2) {
-    return null;
-  }
-
-  return center;
+  return (data.features ?? [])
+    .map((feature) => ({
+      center: feature.center,
+      label: feature.place_name ?? feature.text ?? "",
+    }))
+    .filter(
+      (feature): feature is { center: [number, number]; label: string } =>
+        Array.isArray(feature.center) && feature.center.length >= 2,
+    );
 }
 
 function isNearCenter(point: [number, number], center: [number, number]): boolean {
   const distanceKm = haversineKm(center[1], center[0], point[1], point[0]);
   return distanceKm < 1;
+}
+
+function pickBestCandidate(
+  stopTitle: string,
+  destinationName: string,
+  destination: DestinationContext,
+  candidates: GeocodeCandidate[],
+): [number, number] | null {
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const normalizedStop = normalizeLandmarkTitle(stopTitle);
+  const stopTokens = Array.from(
+    new Set([
+      ...tokenize(normalizedStop),
+      ...tokenize(applyLandmarkAliases(normalizedStop)),
+    ]),
+  );
+  const destinationTokens = tokenize(destinationName);
+  const destinationLabelTokens = tokenize(destination.label);
+
+  let best: { score: number; center: [number, number] } | null = null;
+
+  for (const candidate of candidates) {
+    const distanceKm = haversineKm(
+      destination.center[1],
+      destination.center[0],
+      candidate.center[1],
+      candidate.center[0],
+    );
+
+    // Keep likely nearby POIs and reject very far mismatches.
+    if (distanceKm > 60) {
+      continue;
+    }
+
+    const labelTokens = tokenize(candidate.label);
+    const stopMatch = overlapRatio(stopTokens, labelTokens);
+    const destinationMatch = Math.max(
+      overlapRatio(destinationTokens, labelTokens),
+      overlapRatio(destinationLabelTokens, labelTokens),
+    );
+    const nearCenter = isNearCenter(candidate.center, destination.center);
+
+    if (stopTokens.length > 0 && stopMatch < 0.25) {
+      continue;
+    }
+
+    // Skip vague city-center matches when the stop title terms are absent.
+    if (stopTokens.length > 0 && stopMatch === 0 && nearCenter) {
+      continue;
+    }
+
+    if (stopTokens.length > 0 && stopMatch < 0.25 && nearCenter) {
+      continue;
+    }
+
+    const nearCenterPenalty = nearCenter ? -8 : 0;
+    const distanceScore = Math.max(0, 30 - distanceKm / 2);
+    const score = stopMatch * 55 + destinationMatch * 25 + distanceScore + nearCenterPenalty;
+
+    if (!best || score > best.score) {
+      best = { score, center: candidate.center };
+    }
+  }
+
+  if (!best) {
+    return null;
+  }
+
+  return best.center;
+}
+
+function tokenize(value: string): string[] {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((token) => token.length > 2);
+}
+
+function overlapRatio(source: string[], target: string[]): number {
+  if (source.length === 0 || target.length === 0) {
+    return 0;
+  }
+
+  const targetSet = new Set(target);
+  const matches = source.filter((token) => targetSet.has(token)).length;
+  return matches / source.length;
 }
 
 async function geocodeWithNominatim(query: string): Promise<[number, number] | null> {
@@ -305,50 +456,4 @@ function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): nu
 
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return earthRadiusKm * c;
-}
-
-function spreadOverlappingPoints(points: PointOutput[]): PointOutput[] {
-  const grouped = new Map<string, PointOutput[]>();
-
-  points.forEach((point) => {
-    const key = `${point.lon.toFixed(5)}:${point.lat.toFixed(5)}`;
-    const bucket = grouped.get(key) ?? [];
-    bucket.push(point);
-    grouped.set(key, bucket);
-  });
-
-  const adjusted: PointOutput[] = [];
-
-  grouped.forEach((bucket) => {
-    if (bucket.length === 1) {
-      adjusted.push(bucket[0]);
-      return;
-    }
-
-    const approximateCount = bucket.filter((point) => point.approximate).length;
-    const baseRadiusKm = approximateCount > 0 ? 0.5 : 0.12;
-
-    bucket.forEach((point, index) => {
-      const angle = (index / bucket.length) * Math.PI * 2;
-      const radiusKm = baseRadiusKm + Math.floor(index / 8) * 0.08;
-      const jittered = offsetByKm(point, radiusKm, angle);
-      adjusted.push(jittered);
-    });
-  });
-
-  return adjusted.sort((a, b) => a.order - b.order);
-}
-
-function offsetByKm(point: PointOutput, radiusKm: number, angleRad: number): PointOutput {
-  // Convert km offsets to degrees; longitude shrinks by latitude cosine.
-  const deltaLat = (radiusKm * Math.sin(angleRad)) / 110.574;
-  const cosLat = Math.cos((point.lat * Math.PI) / 180);
-  const safeCosLat = Math.abs(cosLat) < 0.0001 ? 0.0001 : cosLat;
-  const deltaLon = (radiusKm * Math.cos(angleRad)) / (111.32 * safeCosLat);
-
-  return {
-    ...point,
-    lon: point.lon + deltaLon,
-    lat: point.lat + deltaLat,
-  };
 }
