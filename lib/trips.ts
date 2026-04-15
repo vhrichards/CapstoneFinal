@@ -53,6 +53,13 @@ export type Trip = {
 
 const TRIPS_STORAGE_KEY = "plannerMvp.trips";
 const USER_STORAGE_KEY = "plannerMvp.currentUser";
+const ACCOUNTS_STORAGE_KEY = "plannerMvp.accounts";
+
+type LocalAccount = {
+  username: string;
+  password: string;
+  createdAt: string;
+};
 
 function browserOnlyError(): never {
   throw new Error("This utility should only run in the browser.");
@@ -93,6 +100,53 @@ function writeTripsToStorage(trips: Trip[]): void {
   }
 
   window.localStorage.setItem(TRIPS_STORAGE_KEY, JSON.stringify(trips));
+}
+
+function readAccountsFromStorage(): LocalAccount[] {
+  if (typeof window === "undefined") {
+    return browserOnlyError();
+  }
+
+  const raw = window.localStorage.getItem(ACCOUNTS_STORAGE_KEY);
+  if (!raw) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as LocalAccount[];
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed
+      .map((account) => {
+        const legacyName = (account as { name?: unknown }).name;
+        const username =
+          typeof account?.username === "string"
+            ? account.username
+            : typeof legacyName === "string"
+              ? legacyName
+              : "";
+
+        return {
+          username: username.trim(),
+          password: typeof account?.password === "string" ? account.password : "",
+          createdAt:
+            typeof account?.createdAt === "string" ? account.createdAt : new Date().toISOString(),
+        } satisfies LocalAccount;
+      })
+      .filter((account) => account.username.length > 0 && account.password.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+function writeAccountsToStorage(accounts: LocalAccount[]): void {
+  if (typeof window === "undefined") {
+    return browserOnlyError();
+  }
+
+  window.localStorage.setItem(ACCOUNTS_STORAGE_KEY, JSON.stringify(accounts));
 }
 
 export function seedTrips(): Trip[] {
@@ -193,6 +247,68 @@ export function clearCurrentUser(): void {
   }
 
   window.localStorage.removeItem(USER_STORAGE_KEY);
+}
+
+export function signUpLocalAccount(input: {
+  username: string;
+  password: string;
+}): { ok: true } | { ok: false; message: string } {
+  const username = input.username.trim();
+  const password = input.password.trim();
+
+  if (username.length < 2) {
+    return { ok: false, message: "Enter at least 2 characters for your username." };
+  }
+
+  if (password.length < 6) {
+    return { ok: false, message: "Use a password with at least 6 characters." };
+  }
+
+  const accounts = readAccountsFromStorage();
+  const exists = accounts.some(
+    (account) => account.username.toLowerCase() === username.toLowerCase(),
+  );
+
+  if (exists) {
+    return { ok: false, message: "An account with that username already exists. Please log in." };
+  }
+
+  accounts.push({
+    username,
+    password,
+    createdAt: new Date().toISOString(),
+  });
+
+  writeAccountsToStorage(accounts);
+  setCurrentUser(username);
+  return { ok: true };
+}
+
+export function loginLocalAccount(input: {
+  username: string;
+  password: string;
+}): { ok: true } | { ok: false; message: string } {
+  const username = input.username.trim();
+  const password = input.password.trim();
+  const accounts = readAccountsFromStorage();
+
+  if (accounts.length === 0) {
+    return { ok: false, message: "No accounts found yet. Please create an account first." };
+  }
+
+  const account = accounts.find(
+    (item) => item.username.toLowerCase() === username.toLowerCase(),
+  );
+  if (!account) {
+    return { ok: false, message: "Account not found. Check your username or create an account." };
+  }
+
+  if (account.password !== password) {
+    return { ok: false, message: "Incorrect password. Please try again." };
+  }
+
+  setCurrentUser(account.username);
+  return { ok: true };
 }
 
 export function getTrips(): Trip[] {
