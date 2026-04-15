@@ -11,6 +11,7 @@ type PointOutput = {
   time: string;
   lon: number;
   lat: number;
+  approximate?: boolean;
 };
 
 export async function POST(request: Request) {
@@ -55,6 +56,7 @@ export async function POST(request: Request) {
           time: stop.time,
           lon: destinationContext.center[0],
           lat: destinationContext.center[1],
+          approximate: true,
         });
         continue;
       }
@@ -74,6 +76,7 @@ export async function POST(request: Request) {
           time: stop.time,
           lon: destinationContext.center[0],
           lat: destinationContext.center[1],
+          approximate: true,
         });
         continue;
       }
@@ -87,7 +90,9 @@ export async function POST(request: Request) {
       });
     }
 
-    if (points.length === 0) {
+    const visiblePoints = spreadOverlappingPoints(points);
+
+    if (visiblePoints.length === 0) {
       return NextResponse.json(
         { error: "Could not geocode itinerary stops for map display." },
         { status: 502 },
@@ -101,7 +106,7 @@ export async function POST(request: Request) {
           type: "Feature",
           geometry: {
             type: "LineString",
-            coordinates: points.map((point) => [point.lon, point.lat]),
+            coordinates: visiblePoints.map((point) => [point.lon, point.lat]),
           },
           properties: {
             stroke: "#005f73",
@@ -109,7 +114,7 @@ export async function POST(request: Request) {
             "stroke-opacity": 0.8,
           },
         },
-        ...points.map((point) => ({
+        ...visiblePoints.map((point) => ({
           type: "Feature",
           geometry: {
             type: "Point",
@@ -129,7 +134,7 @@ export async function POST(request: Request) {
     const mapUrl = `https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/geojson(${encodedOverlay})/auto/1200x700?padding=70&access_token=${token}`;
 
     return NextResponse.json({
-      points,
+      points: visiblePoints,
       mapUrl,
     });
   } catch (error) {
@@ -300,4 +305,50 @@ function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): nu
 
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return earthRadiusKm * c;
+}
+
+function spreadOverlappingPoints(points: PointOutput[]): PointOutput[] {
+  const grouped = new Map<string, PointOutput[]>();
+
+  points.forEach((point) => {
+    const key = `${point.lon.toFixed(5)}:${point.lat.toFixed(5)}`;
+    const bucket = grouped.get(key) ?? [];
+    bucket.push(point);
+    grouped.set(key, bucket);
+  });
+
+  const adjusted: PointOutput[] = [];
+
+  grouped.forEach((bucket) => {
+    if (bucket.length === 1) {
+      adjusted.push(bucket[0]);
+      return;
+    }
+
+    const approximateCount = bucket.filter((point) => point.approximate).length;
+    const baseRadiusKm = approximateCount > 0 ? 0.5 : 0.12;
+
+    bucket.forEach((point, index) => {
+      const angle = (index / bucket.length) * Math.PI * 2;
+      const radiusKm = baseRadiusKm + Math.floor(index / 8) * 0.08;
+      const jittered = offsetByKm(point, radiusKm, angle);
+      adjusted.push(jittered);
+    });
+  });
+
+  return adjusted.sort((a, b) => a.order - b.order);
+}
+
+function offsetByKm(point: PointOutput, radiusKm: number, angleRad: number): PointOutput {
+  // Convert km offsets to degrees; longitude shrinks by latitude cosine.
+  const deltaLat = (radiusKm * Math.sin(angleRad)) / 110.574;
+  const cosLat = Math.cos((point.lat * Math.PI) / 180);
+  const safeCosLat = Math.abs(cosLat) < 0.0001 ? 0.0001 : cosLat;
+  const deltaLon = (radiusKm * Math.cos(angleRad)) / (111.32 * safeCosLat);
+
+  return {
+    ...point,
+    lon: point.lon + deltaLon,
+    lat: point.lat + deltaLat,
+  };
 }
